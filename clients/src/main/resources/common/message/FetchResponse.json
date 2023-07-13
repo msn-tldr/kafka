@@ -102,6 +102,17 @@
           "about": "The preferred read replica for the consumer to use on its next fetch request"},
         { "name": "Records", "type": "records", "versions": "0+", "nullableVersions": "0+", "about": "The record data."}
       ]}
+    ]},
+    { "name": "LeaderEndpoints", "type": "[]LeaderEndpoint", "versions": "12+", "taggedVersions": "12+", "tag": 0,
+      "about": "Endpoints for all current leaders enumerated in PartitionData.", "fields": [
+      { "name": "NodeId", "type": "int32", "versions": "12+",
+        "mapKey": true, "entityType": "brokerId", "about": "The ID of the associated leader"},
+      { "name": "Host", "type": "string", "versions": "12+",
+        "about": "The leader's hostname." },
+      { "name": "Port", "type": "int32", "versions": "12+",
+        "about": "The leader's port." },
+      { "name": "Rack", "type": "string", "versions": "12+", "nullableVersions": "12+", "ignorable": true, "default": "null",
+        "about": "The rack of the leader, or null if it has not been assigned to a rack." }
     ]}
   ]
 }
