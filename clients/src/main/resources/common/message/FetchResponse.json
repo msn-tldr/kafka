@@ -111,7 +111,7 @@
         "about": "The node's hostname." },
       { "name": "Port", "type": "int32", "versions": "12+",
         "about": "The node's port." },
-      { "name": "Rack", "type": "string", "versions": "12+", "nullableVersions": "12+", "ignorable": true, "default": "null",
+      { "name": "Rack", "type": "string", "versions": "12+", "nullableVersions": "12+", "default": "null",
         "about": "The rack of the node, or null if it has not been assigned to a rack." }
     ]}
   ]
