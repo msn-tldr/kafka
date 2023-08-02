@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.clients.producer;
 
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
@@ -458,7 +460,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             this.ioThread.start();
             config.logUnused();
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, time.milliseconds());
-            log.debug("Kafka producer started");
+            log.info("Kafka producer started 10000");
         } catch (Throwable t) {
             // call close methods if internal objects are already constructed this is to prevent resource leak. see KAFKA-2121
             close(Duration.ofMillis(0), true);

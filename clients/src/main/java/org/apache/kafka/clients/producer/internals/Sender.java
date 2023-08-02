@@ -16,6 +16,9 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -122,6 +125,45 @@ public class Sender implements Runnable {
     // A per-partition queue of batches ordered by creation time for tracking the in-flight batches
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
 
+    public static class Stats {
+
+        // Counters to log.
+
+        // Don't need counters to be atomic, since this runs on a single thread of the producer.
+        // But ohh-well, started with atomic so keeping them as it is.
+        public static final AtomicLong batchesBackedOffCounter = new AtomicLong(0);
+        public static final AtomicLong batchesNotReadyCounter = new AtomicLong(0);
+
+        // Latency #s to log, avg/max.
+        private static long totalMetadataRPCLatencyMs = 0;
+        private static long maxMetadataRPCLatencyMs = 0;
+        private static long countMetadataRPC = 0;
+
+        private static Instant metricLastLoggedTime = Instant.now();
+        private static Logger staticLog = null;
+        private static long loggingWindowMs = 10 * 1000;
+
+        public static void recordMetadataRPCLatency(long latencyMs) {
+            totalMetadataRPCLatencyMs += latencyMs;
+            maxMetadataRPCLatencyMs = Math.max(maxMetadataRPCLatencyMs, latencyMs);
+            countMetadataRPC += 1;
+        }
+
+        static void logMetrics(boolean alwaysLog) {
+            if(staticLog == null) {
+                return;
+            }
+            Instant nowI = Instant.now();
+            long timeElapsedMs = Duration.between(metricLastLoggedTime, nowI).toMillis();
+            if (timeElapsedMs > loggingWindowMs || alwaysLog) {
+                metricLastLoggedTime = nowI;
+                    staticLog.info("batchesBackedOffCounter: {}, batchesNotReadyCounter: {}, avg Metadata RPC latency ms: {}, max Metadata RPC latency ms: {} ",
+                    batchesBackedOffCounter.get(), batchesNotReadyCounter.get(), totalMetadataRPCLatencyMs
+                            /(double)countMetadataRPC, maxMetadataRPCLatencyMs);
+            }
+        }
+    }
+
     public Sender(LogContext logContext,
                   KafkaClient client,
                   ProducerMetadata metadata,
@@ -137,6 +179,7 @@ public class Sender implements Runnable {
                   TransactionManager transactionManager,
                   ApiVersions apiVersions) {
         this.log = logContext.logger(Sender.class);
+        Stats.staticLog = this.log;
         this.client = client;
         this.accumulator = accumulator;
         this.metadata = metadata;
@@ -244,6 +287,7 @@ public class Sender implements Runnable {
         // main loop, runs until close is called
         while (running) {
             try {
+                Stats.logMetrics(false);
                 runOnce();
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
@@ -300,6 +344,7 @@ public class Sender implements Runnable {
         }
 
         log.debug("Shutdown of Kafka producer I/O thread has completed.");
+        Stats.logMetrics(false);
     }
 
     /**

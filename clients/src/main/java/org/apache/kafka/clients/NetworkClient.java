@@ -16,6 +16,9 @@
  */
 package org.apache.kafka.clients;
 
+import java.time.Duration;
+import java.time.Instant;
+import org.apache.kafka.clients.producer.internals.Sender;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -1050,6 +1053,8 @@ public class NetworkClient implements KafkaClient {
         // Defined if there is a request in progress, null otherwise
         private InProgressData inProgress;
 
+        private Instant metadataRPCStart = Instant.now();
+
         DefaultMetadataUpdater(Metadata metadata) {
             this.metadata = metadata;
             this.inProgress = null;
@@ -1116,6 +1121,12 @@ public class NetworkClient implements KafkaClient {
             metadata.requestUpdate();
         }
 
+        private void recordMetadataLatency() {
+            long latency = Duration.between(metadataRPCStart, Instant.now()).toMillis();
+            Sender.Stats.recordMetadataRPCLatency(latency);
+            log.info("Metadata LatencyMs: {}", latency);
+        }
+
         @Override
         public void handleFailedRequest(long now, Optional<KafkaException> maybeFatalException) {
             maybeFatalException.ifPresent(metadata::fatalError);
@@ -1125,6 +1136,7 @@ public class NetworkClient implements KafkaClient {
 
         @Override
         public void handleSuccessfulResponse(RequestHeader requestHeader, long now, MetadataResponse response) {
+            recordMetadataLatency();
             // If any partition has leader with missing listeners, log up to ten of these partitions
             // for diagnosing broker configuration issues.
             // This could be a transient issue if listeners were added dynamically to brokers.
@@ -1184,6 +1196,7 @@ public class NetworkClient implements KafkaClient {
                 MetadataRequest.Builder metadataRequest = requestAndVersion.requestBuilder;
                 log.debug("Sending metadata request {} to node {}", metadataRequest, node);
                 sendInternalMetadataRequest(metadataRequest, nodeConnectionId, now);
+                metadataRPCStart = Instant.now();
                 inProgress = new InProgressData(requestAndVersion.requestVersion, requestAndVersion.isPartialUpdate);
                 return defaultRequestTimeoutMs;
             }

@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.producer.Callback;
+import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.utils.ProducerIdAndEpoch;
 import org.apache.kafka.common.Cluster;
@@ -625,6 +626,9 @@ public class RecordAccumulator {
             if (sendable && !backingOff) {
                 readyNodes.add(leader);
             } else {
+                log.info("batchReady NOT, Node {} sendable {}, backingoff {}", leader, sendable, backingOff);
+                Sender.Stats.batchesNotReadyCounter.incrementAndGet();
+                Sender.Stats.logMetrics(true);
                 long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
                 // Note that this results in a conservative estimate since an un-sendable partition may have
                 // a leader that will later be found to have sendable data. However, this is good enough
@@ -702,6 +706,11 @@ public class RecordAccumulator {
 
                 waitedTimeMs = batch.waitedTimeMs(nowMs);
                 backingOff = batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
+                if(backingOff) {
+                    log.info("partitionReady, batch {} leader {} backing-off", batch, leader);
+                    Sender.Stats.batchesBackedOffCounter.incrementAndGet();
+                    Sender.Stats.logMetrics(true);
+                }
                 dequeSize = deque.size();
                 full = dequeSize > 1 || batch.isFull();
             }
@@ -856,8 +865,12 @@ public class RecordAccumulator {
                 // first != null
                 boolean backoff = first.attempts() > 0 && first.waitedTimeMs(now) < retryBackoffMs;
                 // Only drain the batch if it is not during backoff period.
-                if (backoff)
+                if (backoff) {
+                    log.info("drainBatchesForOneNode, Batch {} backing off", first);
+                    Sender.Stats.batchesBackedOffCounter.incrementAndGet();
+                    Sender.Stats.logMetrics(true);
                     continue;
+                }
 
                 if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {
                     // there is a rare case that a single batch size is larger than the request size due to
@@ -1140,6 +1153,7 @@ public class RecordAccumulator {
 
         if (deque == null) return;
         synchronized (deque) {
+            log.info("For tp {}, skip back off for batches #{}", topicPartition, deque.size());
             deque.forEach(batch -> {
                 batch.resetRetryBackoff();
             });
