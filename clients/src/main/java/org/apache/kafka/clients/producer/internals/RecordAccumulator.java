@@ -672,7 +672,9 @@ public class RecordAccumulator {
             TopicPartition part = new TopicPartition(topic, entry.getKey());
             // Advance queueSizesIndex so that we properly index available
             // partitions.  Do it here so that it's done for all code paths.
+
             Node leader = cluster.leaderFor(part);
+            int leaderEpoch = cluster.leaderEpochFor(part);
             if (leader != null && queueSizes != null) {
                 ++queueSizesIndex;
                 assert queueSizesIndex < queueSizes.length;
@@ -701,7 +703,7 @@ public class RecordAccumulator {
                 }
 
                 waitedTimeMs = batch.waitedTimeMs(nowMs);
-                backingOff = batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
+                backingOff = !batch.hasLeaderChanged(leaderEpoch) && batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
                 dequeSize = deque.size();
                 full = dequeSize > 1 || batch.isFull();
             }
@@ -835,6 +837,8 @@ public class RecordAccumulator {
         int start = drainIndex = drainIndex % parts.size();
         do {
             PartitionInfo part = parts.get(drainIndex);
+            int leaderEpoch = part.leaderEpoch();
+
             TopicPartition tp = new TopicPartition(part.topic(), part.partition());
             updateDrainIndex(node.idString(), drainIndex);
             drainIndex = (drainIndex + 1) % parts.size();
@@ -843,8 +847,9 @@ public class RecordAccumulator {
                 continue;
 
             Deque<ProducerBatch> deque = getDeque(tp);
-            if (deque == null)
+            if (deque == null) {
                 continue;
+            }
 
             final ProducerBatch batch;
             synchronized (deque) {
@@ -854,7 +859,9 @@ public class RecordAccumulator {
                     continue;
 
                 // first != null
-                boolean backoff = first.attempts() > 0 && first.waitedTimeMs(now) < retryBackoffMs;
+                boolean  hasLeaderChanged = first.hasLeaderChanged(leaderEpoch);
+                boolean backoff = !hasLeaderChanged && first.attempts() > 0 && first.waitedTimeMs(now) < retryBackoffMs;
+
                 // Only drain the batch if it is not during backoff period.
                 if (backoff)
                     continue;

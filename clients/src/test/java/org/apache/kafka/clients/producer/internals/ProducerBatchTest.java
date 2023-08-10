@@ -19,6 +19,7 @@ package org.apache.kafka.clients.producer.internals;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.KafkaException;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.internals.RecordHeader;
@@ -261,6 +262,40 @@ public class ProducerBatchTest {
         RuntimeException topLevelException = new RuntimeException();
         assertThrows(NullPointerException.class, () ->
             testCompleteExceptionally(recordCount, topLevelException, null));
+    }
+
+    @Test
+    public void testBatchLeaderChange() {
+        ProducerBatch batch = new ProducerBatch(new TopicPartition("topic", 1), memoryRecordsBuilder, now);
+
+        assertEquals(PartitionInfo.UNKNOWN_LEADER_EPOCH, batch.currentLeaderEpoch());
+        assertEquals(-1, batch.leaderChangedAttempts());
+
+        // 1st attempt on batch being produced to a leader, i.e. not a retry.
+        // Check leader isn't flagged as a new leader.
+        int batchLeaderEpoch = 100;
+        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader is assigned for 1st time");
+        assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
+        assertEquals(-1, batch.leaderChangedAttempts());
+
+        // 1st Retry-attempt to a new leader. Check leader change is detected.
+        batchLeaderEpoch++;
+        batch.reenqueued(0);
+        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has changed");
+        assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
+        assertEquals(1, batch.leaderChangedAttempts());
+
+        // Same 1st retry-attempt. Check leader is still detected as new.
+        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has changed");
+        assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
+        assertEquals(1, batch.leaderChangedAttempts());
+
+        // Subsequent 2nd retry-attempt to same leader. Check leader is not detected as changed.
+        batch.reenqueued(0);
+        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has not changed");
+        assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
+        assertEquals(1, batch.leaderChangedAttempts());
+
     }
 
     private void testCompleteExceptionally(

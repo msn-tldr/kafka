@@ -18,6 +18,7 @@ package org.apache.kafka.clients.producer.internals;
 
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RecordBatchTooLargeException;
 import org.apache.kafka.common.header.Header;
@@ -78,6 +79,8 @@ public final class ProducerBatch {
     private long drainedMs;
     private boolean retry;
     private boolean reopened;
+    private int currentLeaderEpoch;
+    private int leaderChangedAttempts;
 
     public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs) {
         this(tp, recordsBuilder, createdMs, false);
@@ -94,8 +97,35 @@ public final class ProducerBatch {
         this.isSplitBatch = isSplitBatch;
         float compressionRatioEstimation = CompressionRatioEstimator.estimation(topicPartition.topic(),
                                                                                 recordsBuilder.compressionType());
+        this.currentLeaderEpoch = PartitionInfo.UNKNOWN_LEADER_EPOCH;
+        this.leaderChangedAttempts = -1;
         recordsBuilder.setEstimatedCompressionRatio(compressionRatioEstimation);
     }
+
+    /*
+     * Returns whether the leader epoch has changed since the last attempt.
+     * @param latestLeaderEpoch The latest leader epoch of the leader.
+     * @return true if the leader has changed, otherwise false.
+     */
+    boolean hasLeaderChanged(int latestLeaderEpoch) {
+        if (latestLeaderEpoch == PartitionInfo.UNKNOWN_LEADER_EPOCH || latestLeaderEpoch < 0)
+            throw new IllegalStateException("This method should be called with a valid leader epoch.");
+        boolean leaderChanged = false;
+        // Checking for leader change makes sense only from 1st retry onwards(attempt >=1).
+        if (attempts() >= 1) {
+            // If the leader's epoch has changed, this counts as a leader change
+            if (currentLeaderEpoch != latestLeaderEpoch) {
+                leaderChangedAttempts = attempts();
+                leaderChanged = true;
+            } else {
+                // Otherwise, it's only a leader change until the first attempt is made with this leader
+                leaderChanged = attempts.get() == leaderChangedAttempts;
+            }
+        }
+        currentLeaderEpoch = latestLeaderEpoch;
+        return leaderChanged;
+    }
+
 
     /**
      * Append the record to the current record set and return the relative offset within that record set
@@ -516,5 +546,13 @@ public final class ProducerBatch {
 
     public boolean sequenceHasBeenReset() {
         return reopened;
+    }
+
+    public int currentLeaderEpoch() {
+        return currentLeaderEpoch;
+    }
+
+    public int leaderChangedAttempts() {
+        return leaderChangedAttempts;
     }
 }

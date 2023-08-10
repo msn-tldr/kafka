@@ -1273,6 +1273,85 @@ public class RecordAccumulatorTest {
         }
     }
 
+    @Test
+    public void testReadyAndDrainWithLeaderChanges() throws InterruptedException {
+        int part1Epoch = 100;
+        // Create cluster metadata, 1 node hosting 1 partition.
+        part1 = new PartitionInfo(topic, partition1, node1, part1Epoch, null, null, null);
+        cluster = new Cluster(null, Arrays.asList(node1, node2), Arrays.asList(part1),
+            Collections.emptySet(), Collections.emptySet());
+
+        // Setup record accumulator with RetryBackoffMs is 100ms
+        int batchSize = 10;
+        int lingerMs = 10;
+        int retryBackoffMs = 100;
+        RecordAccumulator accum = createTestRecordAccumulator(batchSize, 20L * batchSize, CompressionType.NONE, lingerMs);
+
+        // Create 1 batch(batchA) to be produced to partition1.
+        long now = time.milliseconds();
+        accum.append(topic, partition1, 0L, key, value, Record.EMPTY_HEADERS, null, maxBlockTimeMs, false, now, cluster);
+
+        // 1st attempt for batchA, it should be ready & drained to be produced.
+        {
+            now += lingerMs + 1;
+            RecordAccumulator.ReadyCheckResult result = accum.ready(cluster, now);
+            assertTrue(result.readyNodes.contains(node1), "Node1 is ready");
+
+            Map<Integer, List<ProducerBatch>> batches = accum.drain(cluster,
+                result.readyNodes, 999999 /* maxSize */, now);
+            assertTrue(batches.containsKey(node1.id()) && batches.get(node1.id()).size() == 1, "Node1 has 1 batch ready & drained");
+            ProducerBatch batch = batches.get(node1.id()).get(0);
+            assertEquals(part1Epoch, batch.currentLeaderEpoch());
+            assertEquals(-1, batch.leaderChangedAttempts());
+            // Re-enque batch for subsequent retries.
+            accum.reenqueue(batch, now);
+        }
+
+        // 2nd attempt for batchA, i.e. 1st retry, to same leader so should backoff
+        {
+            RecordAccumulator.ReadyCheckResult result = accum.ready(cluster, now);
+            assertFalse(result.readyNodes.contains(node1), "Node1 is not ready");
+
+            // Try to drain from node1, it should return no batches.
+            Map<Integer, List<ProducerBatch>> batches = accum.drain(cluster,
+                new HashSet<>(Arrays.asList(node1)), 999999 /* maxSize */, now);
+            assertTrue(batches.containsKey(node1.id()) && batches.get(node1.id()).isEmpty(),
+                "Not batches ready to be drained on Node1");
+
+            // Wait for more than retryBackOffMs, then drain & re-enenque batch for subsequent retries.
+            now += 2 * retryBackoffMs;
+            batches = accum.drain(cluster,
+                new HashSet<>(Arrays.asList(node1)), 999999 /* maxSize */, now);
+            assertTrue(batches.containsKey(node1.id()) && batches.get(node1.id()).size() == 1, "Node1 has 1 batch ready & drained");
+            ProducerBatch batch = batches.get(node1.id()).get(0);
+            assertEquals(part1Epoch, batch.currentLeaderEpoch());
+            assertEquals(-1, batch.leaderChangedAttempts());
+            // Re-enque batch for subsequent retries.
+            accum.reenqueue(batch, now);
+        }
+
+        // 3rd attempt, i.e. 2nd retry, but to a different leader should not backoff.
+        {
+            // Create cluster metadata, with new leader epoch.
+            part1Epoch++;
+            part1 = new PartitionInfo(topic, partition1, node1, part1Epoch, null, null, null);
+            cluster = new Cluster(null, Arrays.asList(node1, node2), Arrays.asList(part1),
+                Collections.emptySet(), Collections.emptySet());
+            RecordAccumulator.ReadyCheckResult result = accum.ready(cluster, now);
+            assertTrue(result.readyNodes.contains(node1), "Node1 is ready");
+
+            Map<Integer, List<ProducerBatch>> batches = accum.drain(cluster,
+                result.readyNodes, 999999 /* maxSize */, now);
+            assertTrue(batches.containsKey(node1.id()) && batches.get(node1.id()).size() == 1, "Node1 has 1 batch ready & drained");
+            ProducerBatch batch = batches.get(node1.id()).get(0);
+            assertEquals(part1Epoch, batch.currentLeaderEpoch());
+            assertEquals(2, batch.leaderChangedAttempts());
+
+            // Re-enque batch for subsequent retries.
+            accum.reenqueue(batch, now);
+        }
+    }
+
     private int prepareSplitBatches(RecordAccumulator accum, long seed, int recordSize, int numRecords)
         throws InterruptedException {
         Random random = new Random();
