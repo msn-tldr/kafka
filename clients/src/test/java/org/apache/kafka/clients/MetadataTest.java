@@ -18,6 +18,7 @@ package org.apache.kafka.clients;
 
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.InvalidTopicException;
@@ -601,6 +602,35 @@ public class MetadataTest {
         Cluster fromMetadataEmpty = MetadataCache.empty().cluster();
         Cluster fromClusterEmpty = Cluster.empty();
         assertEquals(fromMetadataEmpty, fromClusterEmpty);
+    }
+
+    @Test
+    public void testUponUpdateMetadataCacheHasCorrectPartitionLeaderEpoch() {
+        Time time = new MockTime();
+
+        String topic1 = "topic1";
+        int topic1Part0Epoch = 10;
+        int topic1Part1Epoch = 11;
+
+        metadata.requestUpdate(true);
+        Metadata.MetadataRequestAndVersion versionAndBuilder = metadata.newMetadataRequestAndVersion(
+            time.milliseconds());
+        metadata.update(versionAndBuilder.requestVersion,
+            RequestTestUtils.metadataUpdateWith(1, Collections.singletonMap(topic1, 2), tp -> {
+                if (tp.equals(new TopicPartition(topic1, 0))) {
+                    return topic1Part0Epoch;
+                } else if (tp.equals(new TopicPartition(topic1, 1))) {
+                    return topic1Part1Epoch;
+                } else {
+                    throw new RuntimeException("unexpected tp " + tp);
+                }
+            }), false,
+            time.milliseconds());
+        assertFalse(metadata.updateRequested());
+        // Verify epoch matches expected value
+        assertEquals(topic1Part0Epoch, metadata.fetch().leaderEpochFor(new TopicPartition(topic1, 0)));
+        assertEquals(topic1Part1Epoch, metadata.fetch().leaderEpochFor(new TopicPartition(topic1, 1)));
+        assertEquals(PartitionInfo.UNKNOWN_LEADER_EPOCH, metadata.fetch().leaderEpochFor(new TopicPartition("dummy", 1)));
     }
 
     @Test
