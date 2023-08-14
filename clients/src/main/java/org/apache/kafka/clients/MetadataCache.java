@@ -62,7 +62,19 @@ public class MetadataCache {
                   Set<String> internalTopics,
                   Node controller,
                   Map<String, Uuid> topicIds) {
-        this(clusterId, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds, null);
+        this(clusterId, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds, null, -1);
+    }
+
+    MetadataCache(String clusterId,
+        Map<Integer, Node> nodes,
+        Collection<PartitionMetadata> partitions,
+        Set<String> unauthorizedTopics,
+        Set<String> invalidTopics,
+        Set<String> internalTopics,
+        Node controller,
+        Map<String, Uuid> topicIds,
+        int updateVersion) {
+        this(clusterId, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds, null, updateVersion);
     }
 
     private MetadataCache(String clusterId,
@@ -73,7 +85,8 @@ public class MetadataCache {
                           Set<String> internalTopics,
                           Node controller,
                           Map<String, Uuid> topicIds,
-                          Cluster clusterInstance) {
+                          Cluster clusterInstance,
+                          int updateVersion) {
         this.clusterId = clusterId;
         this.nodes = nodes;
         this.unauthorizedTopics = unauthorizedTopics;
@@ -88,7 +101,7 @@ public class MetadataCache {
         }
 
         if (clusterInstance == null) {
-            computeClusterView();
+            computeClusterView(updateVersion);
         } else {
             this.clusterInstance = clusterInstance;
         }
@@ -118,6 +131,18 @@ public class MetadataCache {
         return new ClusterResource(clusterId);
     }
 
+    MetadataCache mergeWith(String newClusterId,
+        Map<Integer, Node> newNodes,
+        Collection<PartitionMetadata> addPartitions,
+        Set<String> addUnauthorizedTopics,
+        Set<String> addInvalidTopics,
+        Set<String> addInternalTopics,
+        Node newController,
+        Map<String, Uuid> topicIds,
+        BiPredicate<String, Boolean> retainTopic) {
+        return mergeWith(newClusterId, newNodes, addPartitions, addUnauthorizedTopics, addInvalidTopics, addInternalTopics, newController, topicIds, retainTopic, -1);
+    }
+
     /**
      * Merges the metadata cache's contents with the provided metadata, returning a new metadata cache. The provided
      * metadata is presumed to be more recent than the cache's metadata, and therefore all overlapping metadata will
@@ -141,7 +166,8 @@ public class MetadataCache {
                             Set<String> addInternalTopics,
                             Node newController,
                             Map<String, Uuid> topicIds,
-                            BiPredicate<String, Boolean> retainTopic) {
+                            BiPredicate<String, Boolean> retainTopic,
+                            int updateVersion) {
 
         Predicate<String> shouldRetainTopic = topic -> retainTopic.test(topic, internalTopics.contains(topic));
 
@@ -174,7 +200,7 @@ public class MetadataCache {
         Set<String> newInternalTopics = fillSet(addInternalTopics, internalTopics, shouldRetainTopic);
 
         return new MetadataCache(newClusterId, newNodes, newMetadataByPartition.values(), newUnauthorizedTopics,
-                newInvalidTopics, newInternalTopics, newController, newTopicIds);
+                newInvalidTopics, newInternalTopics, newController, newTopicIds, updateVersion);
     }
 
     /**
@@ -196,13 +222,13 @@ public class MetadataCache {
         return result;
     }
 
-    private void computeClusterView() {
+    private void computeClusterView(int updateVersion) {
         List<PartitionInfo> partitionInfos = metadataByPartition.values()
                 .stream()
                 .map(metadata -> MetadataResponse.toPartitionInfo(metadata, nodes))
                 .collect(Collectors.toList());
-        this.clusterInstance = new Cluster(clusterId, nodes.values(), partitionInfos, unauthorizedTopics,
-                invalidTopics, internalTopics, controller, topicIds);
+        this.clusterInstance = new Cluster(clusterId, false, nodes.values(), partitionInfos, unauthorizedTopics,
+                invalidTopics, internalTopics, controller, topicIds, updateVersion);
     }
 
     static MetadataCache bootstrap(List<InetSocketAddress> addresses) {
@@ -214,12 +240,13 @@ public class MetadataCache {
         }
         return new MetadataCache(null, nodes, Collections.emptyList(),
                 Collections.emptySet(), Collections.emptySet(), Collections.emptySet(),
-                null, Collections.emptyMap(), Cluster.bootstrap(addresses));
+                null, Collections.emptyMap(), Cluster.bootstrap(addresses), -1);
     }
 
     static MetadataCache empty() {
         return new MetadataCache(null, Collections.emptyMap(), Collections.emptyList(),
-                Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap(), Cluster.empty());
+
+                Collections.emptySet(), Collections.emptySet(), Collections.emptySet(), null, Collections.emptyMap(), Cluster.empty(), -1);
     }
 
     @Override

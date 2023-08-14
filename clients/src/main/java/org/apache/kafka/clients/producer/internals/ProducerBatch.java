@@ -16,8 +16,11 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.time.Duration;
+import java.time.Instant;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.clients.producer.internals.Sender.Stats;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.RecordBatchTooLargeException;
@@ -81,6 +84,14 @@ public final class ProducerBatch {
     private boolean reopened;
     private int currentLeaderEpoch;
     private int leaderChangedAttempts;
+    int leaderErrorAttemptMetadataUpdateVersion = -1;
+    AtomicInteger leaderErrorFirstAttempt = new AtomicInteger(-1);
+    Instant metadataRefreshStart = null;
+
+    public boolean batchHadLeaderErrorInLastAttempt() {
+        int leaderErrorFirstAttempt = this.leaderErrorFirstAttempt.get();
+        return leaderErrorFirstAttempt >= 0 && (leaderErrorFirstAttempt + 1) == this.attempts();
+    }
 
     public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs) {
         this(tp, recordsBuilder, createdMs, false);
@@ -107,7 +118,7 @@ public final class ProducerBatch {
      * @param latestLeaderEpoch The latest leader epoch of the leader.
      * @return true if the leader has changed, otherwise false.
      */
-    boolean hasLeaderChanged(int latestLeaderEpoch) {
+    boolean hasLeaderChanged(int latestLeaderEpoch, int updateVersion) {
         if (latestLeaderEpoch == PartitionInfo.UNKNOWN_LEADER_EPOCH || latestLeaderEpoch < 0)
             return false;
 
@@ -118,6 +129,18 @@ public final class ProducerBatch {
             if (currentLeaderEpoch != latestLeaderEpoch) {
                 leaderChangedAttempts = attempts();
                 leaderChanged = true;
+                if (batchHadLeaderErrorInLastAttempt()) {
+                    if (updateVersion == -1) {
+                        throw new IllegalStateException("updateVersion > -1");
+                    }
+                    if (leaderErrorAttemptMetadataUpdateVersion == -1) {
+                        throw new IllegalStateException("lastAttemptMetadataUpdateVersion > -1");
+                    }
+                    if (metadataRefreshStart == null) {
+                        throw new IllegalStateException("metadataRefreshStart != null");
+                    }
+                    Stats.recordBatchMetadataStats(Duration.between(metadataRefreshStart, Instant.now()).toMillis(), updateVersion - leaderErrorAttemptMetadataUpdateVersion);
+                }
             } else {
                 // Otherwise, it's only a leader change until the first attempt is made with this leader
                 leaderChanged = attempts.get() == leaderChangedAttempts;

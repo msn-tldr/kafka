@@ -272,30 +272,30 @@ public class ProducerBatchTest {
         assertEquals(-1, batch.leaderChangedAttempts());
 
         // hasLeaderChanged() called with UNKNOWN_LEADER_EPOCH, should return false.
-        assertFalse(batch.hasLeaderChanged(PartitionInfo.UNKNOWN_LEADER_EPOCH));
+        assertFalse(batch.hasLeaderChanged(PartitionInfo.UNKNOWN_LEADER_EPOCH, 0));
 
         // 1st attempt on batch being produced to a leader, i.e. not a retry.
         // Check leader isn't flagged as a new leader.
         int batchLeaderEpoch = 100;
-        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader is assigned for 1st time");
+        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch, 0), "batch leader is assigned for 1st time");
         assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
         assertEquals(-1, batch.leaderChangedAttempts());
 
         // 1st Retry-attempt to a new leader. Check leader change is detected.
         batchLeaderEpoch++;
         batch.reenqueued(0);
-        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has changed");
+        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch, 0), "batch leader has changed");
         assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
         assertEquals(1, batch.leaderChangedAttempts());
 
         // Same 1st retry-attempt. Check leader is still detected as new.
-        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has changed");
+        assertTrue(batch.hasLeaderChanged(batchLeaderEpoch, 0), "batch leader has changed");
         assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
         assertEquals(1, batch.leaderChangedAttempts());
 
         // Subsequent 2nd retry-attempt to same leader. Check leader is not detected as changed.
         batch.reenqueued(0);
-        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch), "batch leader has not changed");
+        assertFalse(batch.hasLeaderChanged(batchLeaderEpoch, 0), "batch leader has not changed");
         assertEquals(batchLeaderEpoch, batch.currentLeaderEpoch());
         assertEquals(1, batch.leaderChangedAttempts());
 

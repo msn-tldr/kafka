@@ -329,7 +329,8 @@ public class Metadata implements Closeable {
 
         String previousClusterId = cache.clusterResource().clusterId();
 
-        this.cache = handleMetadataResponse(response, isPartialUpdate, nowMs);
+        // this.cache = handleMetadataResponse(response, isPartialUpdate, nowMs);
+        this.cache = handleMetadataResponse(response, isPartialUpdate, nowMs, this.updateVersion);
 
         Cluster cluster = cache.cluster();
         maybeSetMetadataError(cluster);
@@ -368,7 +369,7 @@ public class Metadata implements Closeable {
     /**
      * Transform a MetadataResponse into a new MetadataCache instance.
      */
-    private MetadataCache handleMetadataResponse(MetadataResponse metadataResponse, boolean isPartialUpdate, long nowMs) {
+    private MetadataCache handleMetadataResponse(MetadataResponse metadataResponse, boolean isPartialUpdate, long nowMs, int updateVersion) {
         // All encountered topics.
         Set<String> topics = new HashSet<>();
 
@@ -429,10 +430,10 @@ public class Metadata implements Closeable {
         if (isPartialUpdate)
             return this.cache.mergeWith(metadataResponse.clusterId(), nodes, partitions,
                 unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller(), topicIds,
-                (topic, isInternal) -> !topics.contains(topic) && retainTopic(topic, isInternal, nowMs));
+                (topic, isInternal) -> !topics.contains(topic) && retainTopic(topic, isInternal, nowMs), updateVersion);
         else
             return new MetadataCache(metadataResponse.clusterId(), nodes, partitions,
-                unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller(), topicIds);
+                unauthorizedTopics, invalidTopics, internalTopics, metadataResponse.controller(), topicIds, updateVersion);
     }
 
     /**

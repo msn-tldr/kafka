@@ -49,6 +49,8 @@ public final class Cluster {
     private final Map<String, Uuid> topicIds;
     private final Map<Uuid, String> topicNames;
 
+    private final int updateVersion;
+
     /**
      * Create a new cluster with the given id, nodes and partitions
      * @param nodes The nodes in the cluster
@@ -107,7 +109,19 @@ public final class Cluster {
         this(clusterId, false, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds);
     }
 
-    private Cluster(String clusterId,
+    public Cluster(String clusterId,
+        boolean isBootstrapConfigured,
+        Collection<Node> nodes,
+        Collection<PartitionInfo> partitions,
+        Set<String> unauthorizedTopics,
+        Set<String> invalidTopics,
+        Set<String> internalTopics,
+        Node controller,
+        Map<String, Uuid> topicIds) {
+        this(clusterId, isBootstrapConfigured, nodes, partitions, unauthorizedTopics, invalidTopics, internalTopics, controller, topicIds, -1);
+    }
+
+    public Cluster(String clusterId,
                     boolean isBootstrapConfigured,
                     Collection<Node> nodes,
                     Collection<PartitionInfo> partitions,
@@ -115,7 +129,8 @@ public final class Cluster {
                     Set<String> invalidTopics,
                     Set<String> internalTopics,
                     Node controller,
-                    Map<String, Uuid> topicIds) {
+                    Map<String, Uuid> topicIds,
+                    int updateVersion) {
         this.isBootstrapConfigured = isBootstrapConfigured;
         this.clusterResource = new ClusterResource(clusterId);
         // make a randomized, unmodifiable copy of the nodes
@@ -193,6 +208,11 @@ public final class Cluster {
         this.invalidTopics = Collections.unmodifiableSet(invalidTopics);
         this.internalTopics = Collections.unmodifiableSet(internalTopics);
         this.controller = controller;
+        this.updateVersion = updateVersion;
+    }
+
+    public int updateVersion() {
+        return this.updateVersion;
     }
 
     /**

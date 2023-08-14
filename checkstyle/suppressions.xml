@@ -106,6 +106,15 @@
     <suppress checks="NPathComplexity"
             files="MessageTest.java|OffsetFetchRequest.java"/>
 
+    <suppress checks="ConstantName"
+            files="Sender.java" />
+
+    <suppress checks="ImportControl"
+      files="NetworkClient.java" />
+
+    <suppress checks="NPathComplexity"
+      files="RecordAccumulator.java" />
+
     <!-- Clients tests -->
     <suppress checks="ClassDataAbstractionCoupling"
               files="(Sender|Fetcher|OffsetFetcher|KafkaConsumer|Metrics|RequestResponse|TransactionManager|KafkaAdminClient|Message|KafkaProducer)Test.java"/>

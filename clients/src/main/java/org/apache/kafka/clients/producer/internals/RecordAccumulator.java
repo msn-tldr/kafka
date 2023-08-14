@@ -35,6 +35,7 @@ import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.utils.ExponentialBackoff;
+import org.apache.kafka.clients.producer.internals.Sender.Stats;
 import org.apache.kafka.common.utils.ProducerIdAndEpoch;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
@@ -714,7 +715,8 @@ public class RecordAccumulator {
                 }
 
                 waitedTimeMs = batch.waitedTimeMs(nowMs);
-                backingOff = shouldBackoff(batch.hasLeaderChanged(leaderEpoch), batch, waitedTimeMs);
+                boolean hasLeaderChanged = batch.hasLeaderChanged(leaderEpoch, cluster.updateVersion());
+                backingOff = shouldBackoff(hasLeaderChanged, batch, waitedTimeMs);
                 backoffAttempts = batch.attempts();
                 // backingOff = !batch.hasLeaderChanged(leaderEpoch) && batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
                 dequeSize = deque.size();
@@ -876,7 +878,7 @@ public class RecordAccumulator {
                     continue;
 
                 // first != null
-                boolean  hasLeaderChanged = first.hasLeaderChanged(leaderEpoch);
+                boolean  hasLeaderChanged = first.hasLeaderChanged(leaderEpoch, cluster.updateVersion());
                 // Only drain the batch if it is not during backoff period.
                 if (shouldBackoff(hasLeaderChanged, first, first.waitedTimeMs(now)))
                     continue;
@@ -891,6 +893,18 @@ public class RecordAccumulator {
                 }
 
                 batch = deque.pollFirst();
+
+                // Batch is now drained & will be sent to a broker.
+                // Records Stats if batch in immediately previously attempt got NOT_LEADER_OR_FOLLOWER.
+                if (batch.batchHadLeaderErrorInLastAttempt()) {
+                    Stats.batchesThatGotLeaderError.incrementAndGet();
+                    if (!hasLeaderChanged) {
+                        if (batch.attempts() > 0 && first.waitedTimeMs(now) < retryBackoff.backoff(batch.attempts() - 1)) {
+                            throw new IllegalStateException("Should never reach here.");
+                        }
+                        Stats.batchesThatDontDetectNewLeaderAndBackoff.incrementAndGet();
+                    }
+                }
 
                 boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
                 ProducerIdAndEpoch producerIdAndEpoch =

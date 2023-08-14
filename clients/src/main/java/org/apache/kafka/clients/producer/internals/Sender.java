@@ -16,6 +16,10 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAccumulator;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -122,6 +126,109 @@ public class Sender implements Runnable {
     // A per-partition queue of batches ordered by creation time for tracking the in-flight batches
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
 
+    public static class Stats {
+
+        // Counters to log.
+
+        // Don't need counters to be atomic, since this runs on a single thread of the producer.
+        // But ohh-well, started with atomic so keeping them as it is.
+
+        // This counts # of producer-batches that received NOT_LEADER_OR_FOLLOWER.
+        public static final AtomicLong batchesThatGotLeaderError = new AtomicLong(0);
+
+        // Following count # of batches that received NOT_LEADER_OR_FOLLOWER in the last attempt, and meet additional criteria.
+        // These are subset of batchesThatGotLeaderError.
+
+        // Next attempt is being made, new leader is detected through metadata RPC and skip backoff - (I)
+        public static final AtomicLong batchesThatDetectLeaderChangeAndSkipBackoff = new AtomicLong(0);
+
+        // For batches that meet (I), when next attempt is made, this stores # of metadata RPC counts required to get new leader.
+        static final ArrayList<Long> batchMetadataRefreshRPCCounts = new ArrayList<>();
+         // For batches that meet (I), when next attempt is made, this stores time required to get new leader via metadata RPC.
+         // This period starts when batch is enqueued for subsequent attempt, and ends when new leader is detected for the attempt to go through.
+        static final ArrayList<Long> batchMetadataRefreshTimesMs = new ArrayList<>();
+
+        // Next attempt is being made, new leader is NOT detected hence backoff isn't skipped.
+        public static final AtomicLong batchesThatDontDetectNewLeaderAndBackoff = new AtomicLong(0);
+        // After next attempt has finished, metadata is yet to converge on new-leader's broker, so it responds with NOT_LEADER_OR_FOLLOWER
+        public static final AtomicLong batchesThatAgainGetLeaderErrorInNextAttempt = new AtomicLong(0);
+        // After next attempt has finished, don't receive any errors i.e. succeed.
+        public static final AtomicLong batchesThatSucceededInNextAttempt = new AtomicLong(0);
+
+
+        // Latency #s to log, avg/max.
+        private static AtomicLong totalMetadataRPCLatencyMs = new AtomicLong(0);
+        private static LongAccumulator maxMetadataRPCLatencyMs = new LongAccumulator(Long::max, 0);
+        private static AtomicLong countMetadataRPC = new AtomicLong(0);
+
+        private static Instant metricLastLoggedTime = Instant.now();
+        private static Logger staticLog = null;
+        private static long loggingWindowMs = 10 * 1000;
+
+        public static void recordMetadataRPCLatency(long latencyMs) {
+            // totalMetadataRPCLatencyMs += latencyMs;
+            totalMetadataRPCLatencyMs.addAndGet(latencyMs);
+            // maxMetadataRPCLatencyMs = Math.max(maxMetadataRPCLatencyMs, latencyMs);
+            maxMetadataRPCLatencyMs.accumulate(latencyMs);
+            // countMetadataRPC += 1;
+            countMetadataRPC.incrementAndGet();
+        }
+
+        public static void recordBatchMetadataStats(long metadataRefreshMs, int metadataRPCCounts) {
+            batchMetadataRefreshRPCCounts.add((long) metadataRPCCounts);
+            batchMetadataRefreshTimesMs.add(metadataRefreshMs);
+            batchesThatDetectLeaderChangeAndSkipBackoff.incrementAndGet();
+        }
+
+        private static long[] percentiles(ArrayList<Long> input, double... percentiles) {
+            input.sort(null);
+            long[] values = new long[percentiles.length];
+            for (int i = 0; i < percentiles.length; i++) {
+                int index = (int) (percentiles[i] * input.size());
+                values[i] = input.get(index);
+            }
+            return values;
+        }
+
+        static void logMetrics(boolean alwaysLog) {
+            if (staticLog == null) {
+                return;
+            }
+            Instant nowI = Instant.now();
+            long timeElapsedMs = Duration.between(metricLastLoggedTime, nowI).toMillis();
+            if (timeElapsedMs > loggingWindowMs || alwaysLog) {
+                metricLastLoggedTime = nowI;
+                // Lot at error as perf script doesn't log infos.
+                staticLog.error("batchesThatGotLeaderError: {}, batchesThatDetectLeaderChangeAndSkipBackoff: {}, "
+                    + "batchesThatDontDetectNewLeaderAndBackoff: {}, batchesThatAgainGetLeaderError: {}, batchesThatSucceededInNextAttempt: {}"
+                        + "avg Metadata RPC latency ms: {}, max Metadata RPC latency ms: {} ",
+                    batchesThatGotLeaderError.get(), batchesThatDetectLeaderChangeAndSkipBackoff.get(), batchesThatDontDetectNewLeaderAndBackoff.get(),
+                    batchesThatAgainGetLeaderErrorInNextAttempt.get(), batchesThatSucceededInNextAttempt.get(),
+                    totalMetadataRPCLatencyMs.get() / (double) countMetadataRPC.get(), maxMetadataRPCLatencyMs.get());
+            }
+        }
+
+        static void logPercentile() {
+            if(!batchMetadataRefreshRPCCounts.isEmpty()) {
+                long[] rpcCountPercs = percentiles(batchMetadataRefreshRPCCounts, 0.5, 0.95, 0.99,
+                    0.999);
+                staticLog.error("batchMetadataRefreshRPCCounts 50th {}, 95th {}, 99th {}, 999th {}",
+                    rpcCountPercs[0], rpcCountPercs[1], rpcCountPercs[2], rpcCountPercs[3]);
+            } else {
+                staticLog.error("batchMetadataRefreshRPCCounts is empty!!!");
+            }
+            if(!batchMetadataRefreshTimesMs.isEmpty()) {
+                long[] refreshTimePercs = percentiles(batchMetadataRefreshTimesMs, 0.5, 0.95, 0.99,
+                    0.999);
+                staticLog.error("batchMetadataRefreshTimesMs 50th {}, 95th {}, 99th {}, 999th {}",
+                    refreshTimePercs[0], refreshTimePercs[1], refreshTimePercs[2],
+                    refreshTimePercs[3]);
+            } else {
+                staticLog.error("batchMetadataRefreshTimesMs is empty!!!");
+            }
+        }
+    }
+
     public Sender(LogContext logContext,
                   KafkaClient client,
                   ProducerMetadata metadata,
@@ -137,6 +244,7 @@ public class Sender implements Runnable {
                   TransactionManager transactionManager,
                   ApiVersions apiVersions) {
         this.log = logContext.logger(Sender.class);
+        Stats.staticLog = this.log;
         this.client = client;
         this.accumulator = accumulator;
         this.metadata = metadata;
@@ -244,6 +352,7 @@ public class Sender implements Runnable {
         // main loop, runs until close is called
         while (running) {
             try {
+                Stats.logMetrics(false);
                 runOnce();
             } catch (Exception e) {
                 log.error("Uncaught error in kafka producer I/O thread: ", e);
@@ -300,6 +409,8 @@ public class Sender implements Runnable {
         }
 
         log.debug("Shutdown of Kafka producer I/O thread has completed.");
+        Stats.logMetrics(false);
+        Stats.logPercentile();
     }
 
     /**
@@ -656,6 +767,15 @@ public class Sender implements Runnable {
             maybeRemoveAndDeallocateBatch(batch);
             this.sensors.recordBatchSplit();
         } else if (error != Errors.NONE) {
+            if (error == Errors.NOT_LEADER_OR_FOLLOWER) {
+                // Before queueing batch for next attempt, update state & metrics.
+                int leaderErrorFirstAttempt  = batch.leaderErrorFirstAttempt.get();
+                if (batch.batchHadLeaderErrorInLastAttempt()) {
+                    Stats.batchesThatAgainGetLeaderErrorInNextAttempt.incrementAndGet();
+                } else if (leaderErrorFirstAttempt == -1) {
+                    batch.leaderErrorFirstAttempt.set(batch.attempts());
+                }
+            }
             if (canRetry(batch, response, now)) {
                 log.warn(
                     "Got error produce response with correlation id {} on topic-partition {}, retrying ({} attempts left). Error: {}",
@@ -687,9 +807,17 @@ public class Sender implements Runnable {
                             "to request metadata update now", batch.topicPartition,
                             error.exception(response.errorMessage).toString());
                 }
+                if (error == Errors.NOT_LEADER_OR_FOLLOWER && batch.batchHadLeaderErrorInLastAttempt()) {
+                    // Record that as the start of "metadata-refresh" for next attempt that was enqueued above.
+                    batch.metadataRefreshStart = Instant.now();
+                    batch.leaderErrorAttemptMetadataUpdateVersion = metadata.updateVersion();
+                }
                 metadata.requestUpdate(false);
             }
         } else {
+            if (batch.batchHadLeaderErrorInLastAttempt()) {
+                Stats.batchesThatSucceededInNextAttempt.incrementAndGet();
+            }
             completeBatch(batch, response);
         }
 
@@ -848,6 +976,8 @@ public class Sender implements Runnable {
         }
         ProduceRequestData.TopicProduceDataCollection tpd = new ProduceRequestData.TopicProduceDataCollection();
         for (ProducerBatch batch : batches) {
+            // batch.receivedLeaderChangeErrorInPreviousAttempt = false;
+
             TopicPartition tp = batch.topicPartition;
             MemoryRecords records = batch.records();
 

@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.util.ArrayList;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -23,6 +24,7 @@ import org.apache.kafka.clients.MockClient;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.clients.NodeApiVersions;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.clients.producer.internals.Sender.Stats;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.InvalidRecordException;
 import org.apache.kafka.common.KafkaException;
@@ -3145,6 +3147,163 @@ public class SenderTest {
         result.await();
 
         txnManager.beginTransaction();
+    }
+
+    @Test
+    public void testStats() throws Exception {
+        int maxRetries = 10;
+        Metrics m = new Metrics();
+        SenderMetricsRegistry senderMetrics = new SenderMetricsRegistry(m);
+        try {
+            // Setup
+            String metricGrpName = "producer-metrics-test-stats-1";
+            long totalSize = 1024 * 1024;
+            BufferPool pool = new BufferPool(totalSize, batchSize, metrics, time,
+                metricGrpName);
+            // lingerMs is 0 to quickly send batch.
+            this.accumulator = new RecordAccumulator(logContext, batchSize,
+                CompressionType.NONE, 0, 10L, 100L,
+                DELIVERY_TIMEOUT_MS, metrics, metricGrpName, time, apiVersions, null, pool);
+            Sender sender = new Sender(logContext, client, metadata, this.accumulator, false,
+                MAX_REQUEST_SIZE, ACKS_ALL,
+                maxRetries, senderMetrics, time, REQUEST_TIMEOUT, RETRY_BACKOFF_MS, null,
+                apiVersions);
+            // Update metadata with leader-epochs.
+            this.client.updateMetadata(
+                RequestTestUtils.metadataUpdateWith(1, Collections.singletonMap("test", 2),
+                    tp -> {
+                        if (tp0.equals(tp)) {
+                            return 0;
+                        } else if (tp1.equals(tp)) {
+                            return 0;
+                        } else {
+                            throw new RuntimeException("unexpected tp " + tp);
+                        }
+                    }));
+
+            long offset = 0;
+
+            Future<RecordMetadata> future0 = appendToAccumulator(tp0, 0L, "key", "value");
+            Future<RecordMetadata> future1 = appendToAccumulator(tp1, 0L, "key1", "value1");
+            sender.runOnce(); // connect
+            sender.runOnce(); // send produce request
+            assertEquals(1, client.inFlightRequestCount(),
+                "We should have a single produce request in flight.");
+            assertEquals(1, sender.inFlightBatches(tp0).size());
+            assertEquals(1, sender.inFlightBatches(tp1).size());
+            assertTrue(client.hasInFlightRequests());
+            Map<TopicPartition, OffsetAndError> responses = new LinkedHashMap<>();
+            responses.put(tp1, new OffsetAndError(-1, Errors.NOT_LEADER_OR_FOLLOWER));
+            responses.put(tp0, new OffsetAndError(0, Errors.NONE));
+            client.respond(produceResponse(responses));
+            sender.runOnce(); // receive produce response
+            assertTrue(future0.isDone(), "Request to tp0 should be completed");
+            assertEquals(offset, future0.get().offset());
+            assertTrue(!future1.isDone(), "Request to tp1 still in flight");
+
+            time.sleep(115);
+            // drain batch for next attempt
+            sender.runOnce();
+
+            // Validate
+            // batchesThatGotLeaderError, 1, for tp1
+            // batchesThatDontDetectNewLeaderAndBackoff, 1, for tp1
+            validateStats(1, 0, Arrays.asList(), Arrays.asList(), 1, 0, 0);
+
+            client.respond(produceResponse(tp1, offset, Errors.NOT_LEADER_OR_FOLLOWER, 0));
+            sender.runOnce(); // receive produce response
+            assertTrue(!future1.isDone(), "Request to tp1 still in flight");
+
+            // Validate
+            // batchesThatAgainGetLeaderError, 1, for tp1
+            validateStats(1, 0, Arrays.asList(), Arrays.asList(), 1, 1, 0);
+
+            time.sleep(115);
+            // drain batch for next attempt
+            sender.runOnce(); // send produce request
+            client.respond(produceResponse(tp1, offset, Errors.NONE, 0));
+            sender.runOnce(); // receive produce response
+            assertTrue(future1.isDone(), "Request to tp1 still in flight");
+
+            /// Repeat experiments to test further stats/counters. ///
+            System.out.println("TESTING stats, running test2");
+            /// NOTE - stats from previous run carry over as these are "static".
+            future0 = appendToAccumulator(tp0, 0L, "key", "value");
+            future1 = appendToAccumulator(tp1, 0L, "key1", "value1");
+            sender.runOnce(); // send produce request
+            assertEquals(1, client.inFlightRequestCount(),
+                "We should have a single produce request in flight.");
+            assertEquals(1, sender.inFlightBatches(tp0).size());
+            assertEquals(1, sender.inFlightBatches(tp1).size());
+            assertTrue(client.hasInFlightRequests());
+            responses = new LinkedHashMap<>();
+            responses.put(tp1, new OffsetAndError(-1, Errors.NOT_LEADER_OR_FOLLOWER));
+            responses.put(tp0, new OffsetAndError(0, Errors.NONE));
+            client.respond(produceResponse(responses));
+            sender.runOnce(); // receive produce response
+            assertTrue(future0.isDone(), "Request to tp0 should be completed");
+            assertEquals(offset, future0.get().offset());
+            assertTrue(!future1.isDone(), "Request to tp1 still in flight");
+
+            // Update metadata with leader-epochs for tp1 in 2 RPCs.
+            this.client.updateMetadata(
+                RequestTestUtils.metadataUpdateWith(1, Collections.singletonMap("test", 2),
+                    tp -> {
+                        if (tp0.equals(tp)) {
+                            return 0;
+                        } else if (tp1.equals(tp)) {
+                            return 0;
+                        } else {
+                            throw new RuntimeException("unexpected tp " + tp);
+                        }
+                    }));
+            time.sleep(5);
+            this.client.updateMetadata(
+                RequestTestUtils.metadataUpdateWith(1, Collections.singletonMap("test", 2),
+                    tp -> {
+                        if (tp0.equals(tp)) {
+                            return 0;
+                        } else if (tp1.equals(tp)) {
+                            return 10;
+                        } else {
+                            throw new RuntimeException("unexpected tp " + tp);
+                        }
+                    }));
+            // drain batch for next attempt
+            sender.runOnce();
+
+            // Validate
+            // batchesThatGotLeaderError, 2, for tp1
+            // batchesThatDetectNewLeaderAndSkipBackoff, 1, for tp1. And Metadata RPCs taken are 2. And Metadata refresh time is non-zero.
+            validateStats(2, 1, Arrays.asList(2L), Arrays.asList(5L), 1, 1, 0);
+
+            client.respond(produceResponse(tp1, offset, Errors.NONE, 0));
+            sender.runOnce(); // receive produce response
+            assertTrue(future1.isDone(), "Request to tp1 still in flight");
+
+            // Validate
+            // batchesThatSucceedInNextAttempt, 1, for tp1
+            validateStats(2, 1, Arrays.asList(2L), Arrays.asList(5L), 1, 1, 1);
+        } finally {
+            m.close();
+        }
+    }
+
+    private void validateStats(long batchesThatGotLeaderError, long batchesThatDetectLeaderChangeAndSkipBackoff,
+        List<Long> batchMetadataRefreshRPCCounts, List<Long> batchMetadataRefreshTimesMs,
+        long batchesThatDontDetectNewLeaderAndBackoff, long batchesThatAgainGetLeaderError, long batchesThatSucceededInNextAttempt) {
+        assertEquals(batchesThatGotLeaderError, Stats.batchesThatGotLeaderError.get());
+        assertEquals(batchesThatDetectLeaderChangeAndSkipBackoff, Stats.batchesThatDetectLeaderChangeAndSkipBackoff.get());
+        assertEquals(new ArrayList<>(batchMetadataRefreshRPCCounts), Stats.batchMetadataRefreshRPCCounts);
+        if (batchMetadataRefreshTimesMs.size() > 0) {
+            System.out.println(
+                "MSN: test refreshtimems expected " + batchMetadataRefreshTimesMs.get(0)
+                    + ", actual " + Stats.batchMetadataRefreshTimesMs.get(0));
+        }
+        assertEquals(new ArrayList<>(batchMetadataRefreshTimesMs).size(), Stats.batchMetadataRefreshTimesMs.size());
+        assertEquals(batchesThatDontDetectNewLeaderAndBackoff, Stats.batchesThatDontDetectNewLeaderAndBackoff.get());
+        assertEquals(batchesThatAgainGetLeaderError, Stats.batchesThatAgainGetLeaderErrorInNextAttempt.get());
+        assertEquals(batchesThatSucceededInNextAttempt, Stats.batchesThatSucceededInNextAttempt.get());
     }
 
     private void verifyErrorMessage(ProduceResponse response, String expectedMessage) throws Exception {
