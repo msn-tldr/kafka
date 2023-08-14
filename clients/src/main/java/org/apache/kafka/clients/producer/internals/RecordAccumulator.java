@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.RecordMetadata;
+import org.apache.kafka.clients.producer.internals.Sender.Stats;
 import org.apache.kafka.common.utils.ProducerIdAndEpoch;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
@@ -704,6 +705,17 @@ public class RecordAccumulator {
 
                 waitedTimeMs = batch.waitedTimeMs(nowMs);
                 backingOff = !batch.hasLeaderChanged(leaderEpoch) && batch.attempts() > 0 && waitedTimeMs < retryBackoffMs;
+                //                if (backingOff) {
+                //                    if(batch.receivedLeaderChangeErrorInPreviousAttempt) {
+                //                        Stats.batchesThatGotLeaderChangeErrorAndBackoffCounter.incrementAndGet();
+                //                    }
+                //                } else {
+                //                    if(batch.receivedLeaderChangeErrorInPreviousAttempt) {
+                //                        Stats.batchesThatGotLeaderChangeErrorAndSkipBackoffCounter.incrementAndGet();
+                //                    }
+                //                    Stats.batchesThatSkipBackoffCounter.incrementAndGet();
+                //                }
+
                 dequeSize = deque.size();
                 full = dequeSize > 1 || batch.isFull();
             }
@@ -863,8 +875,9 @@ public class RecordAccumulator {
                 boolean backoff = !hasLeaderChanged && first.attempts() > 0 && first.waitedTimeMs(now) < retryBackoffMs;
 
                 // Only drain the batch if it is not during backoff period.
-                if (backoff)
+                if (backoff) {
                     continue;
+                }
 
                 if (size + first.estimatedSizeInBytes() > maxSize && !ready.isEmpty()) {
                     // there is a rare case that a single batch size is larger than the request size due to
@@ -876,6 +889,15 @@ public class RecordAccumulator {
                 }
 
                 batch = deque.pollFirst();
+
+                // Batch is now drained & will be sent to a broker.
+                // Records Stats
+                if(batch.receivedLeaderChangeErrorInPreviousAttempt) {
+                    Stats.batchesThatGotLeaderError.incrementAndGet();
+                    if(hasLeaderChanged) {
+                        Stats.batchesThatDetectLeaderChange.incrementAndGet();
+                    }
+                }
 
                 boolean isTransactional = transactionManager != null && transactionManager.isTransactional();
                 ProducerIdAndEpoch producerIdAndEpoch =

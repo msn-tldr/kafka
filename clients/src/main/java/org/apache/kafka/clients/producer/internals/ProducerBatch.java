@@ -82,6 +82,8 @@ public final class ProducerBatch {
     private int currentLeaderEpoch;
     private int leaderChangedAttempts;
 
+    boolean receivedLeaderChangeErrorInPreviousAttempt = false;
+
     public ProducerBatch(TopicPartition tp, MemoryRecordsBuilder recordsBuilder, long createdMs) {
         this(tp, recordsBuilder, createdMs, false);
     }
