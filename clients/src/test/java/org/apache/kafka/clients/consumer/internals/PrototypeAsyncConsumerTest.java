@@ -228,7 +228,7 @@ public class PrototypeAsyncConsumerTest {
     }
 
     private ConsumerMetadata createMetadata(SubscriptionState subscription) {
-        return new ConsumerMetadata(0, Long.MAX_VALUE, false, false,
+        return new ConsumerMetadata(0, 0, Long.MAX_VALUE, false, false,
                 subscription, new LogContext(), new ClusterResourceListeners());
     }
 

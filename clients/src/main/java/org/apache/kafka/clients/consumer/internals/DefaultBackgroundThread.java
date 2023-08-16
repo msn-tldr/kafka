@@ -165,6 +165,7 @@ public class DefaultBackgroundThread extends KafkaThread {
                         time,
                         logContext,
                         config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG),
+                        config.getLong(ConsumerConfig.RETRY_BACKOFF_MAX_MS_CONFIG),
                         errorEventHandler,
                         groupState.groupId);
         CommitRequestManager commitRequestManager = coordinatorManager == null ?

@@ -95,6 +95,7 @@ public class DefaultBackgroundThreadTest {
                 "group_id",
                 Optional.empty(),
                 100,
+                1000,
                 true);
         this.groupState = new GroupState(rebalanceConfig);
         this.commitManager = mock(CommitRequestManager.class);
