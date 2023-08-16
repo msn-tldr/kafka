@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients;
 
+import org.apache.kafka.clients.producer.internals.Sender;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Node;
@@ -274,6 +275,10 @@ public class Metadata implements Closeable {
         }
 
         String previousClusterId = cache.clusterResource().clusterId();
+
+        if(Sender.shouldLog.get()) {
+            log.error("Metadata Update received: {}", response);
+        }
 
         this.cache = handleMetadataResponse(response, isPartialUpdate, nowMs);
 

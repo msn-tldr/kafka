@@ -143,6 +143,7 @@ public class RecordAccumulator {
         nodesDrainIndex = new HashMap<>();
         this.transactionManager = transactionManager;
         registerMetrics(metrics, metricGrpName);
+        log.error("RecordAccumulator ctor, retryBackOffMs: {}", retryBackoffMs);
     }
 
     /**
@@ -896,6 +897,9 @@ public class RecordAccumulator {
                     Stats.batchesThatGotLeaderError.incrementAndGet();
                     if(hasLeaderChanged) {
                         Stats.batchesThatDetectLeaderChange.incrementAndGet();
+                    } else {
+                        log.error("For batch {}, attempts {}, first.waitedTimeMs(now) {} ms", batch, batch.attempts(), batch.waitedTimeMs(now));
+                        log.error("For batch {}, leader-id {}, leader-epoch {}", batch, part.leader(), part.leaderEpoch());
                     }
                 }
 

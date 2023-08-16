@@ -113,6 +113,7 @@ public final class ProducerBatch {
         if (latestLeaderEpoch == PartitionInfo.UNKNOWN_LEADER_EPOCH || latestLeaderEpoch < 0)
             throw new IllegalStateException("This method should be called with a valid leader epoch.");
         boolean leaderChanged = false;
+
         // Checking for leader change makes sense only from 1st retry onwards(attempt >=1).
         if (attempts() >= 1) {
             // If the leader's epoch has changed, this counts as a leader change
@@ -123,6 +124,14 @@ public final class ProducerBatch {
                 // Otherwise, it's only a leader change until the first attempt is made with this leader
                 leaderChanged = attempts.get() == leaderChangedAttempts;
             }
+        }
+
+        if(leaderChanged) {
+            log.error("For batch {}, leaderChanged oldEpoch {} newEpoch {} leaderChangedAttempts {}, currentAttempts {}",
+                this, currentLeaderEpoch, latestLeaderEpoch,  leaderChangedAttempts, attempts());
+        } else if(receivedLeaderChangeErrorInPreviousAttempt) {
+            log.error("For batch {}, leader NOT Changed existingEpoch {} proposedEpoch {} leaderChangedAttempts {}, currentAttempts {}",
+                this, currentLeaderEpoch, latestLeaderEpoch,  leaderChangedAttempts, attempts());
         }
         currentLeaderEpoch = latestLeaderEpoch;
         return leaderChanged;

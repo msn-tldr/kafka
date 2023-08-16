@@ -18,6 +18,7 @@ package org.apache.kafka.clients.producer.internals;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
@@ -124,6 +125,8 @@ public class Sender implements Runnable {
 
     // A per-partition queue of batches ordered by creation time for tracking the in-flight batches
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
+
+    public static AtomicBoolean shouldLog = new AtomicBoolean(false);
 
     public static class Stats {
 
@@ -726,6 +729,7 @@ public class Sender implements Runnable {
             }
             if(error == Errors.NOT_LEADER_OR_FOLLOWER || error == Errors.FENCED_LEADER_EPOCH) {
                 batch.receivedLeaderChangeErrorInPreviousAttempt = true;
+                Sender.shouldLog.set(true);
             }
             if (error.exception() instanceof InvalidMetadataException) {
                 if (error.exception() instanceof UnknownTopicOrPartitionException) {
