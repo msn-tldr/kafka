@@ -18,6 +18,7 @@ package org.apache.kafka.clients.producer.internals;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAccumulator;
 import org.apache.kafka.clients.ApiVersions;
@@ -125,6 +126,8 @@ public class Sender implements Runnable {
 
     // A per-partition queue of batches ordered by creation time for tracking the in-flight batches
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
+
+    public static final AtomicBoolean shouldLog = new AtomicBoolean(false);
 
     public static class Stats {
 
@@ -775,6 +778,7 @@ public class Sender implements Runnable {
                 } else if (leaderErrorFirstAttempt == -1) {
                     batch.leaderErrorFirstAttempt.set(batch.attempts());
                 }
+                Sender.shouldLog.set(true);
             }
             if (canRetry(batch, response, now)) {
                 log.warn(
@@ -797,6 +801,7 @@ public class Sender implements Runnable {
                 // thus it is not safe to reassign the sequence.
                 failBatch(batch, response, batch.attempts() < this.retries);
             }
+
             if (error.exception() instanceof InvalidMetadataException) {
                 if (error.exception() instanceof UnknownTopicOrPartitionException) {
                     log.warn("Received unknown topic or partition error in produce request on partition {}. The " +
