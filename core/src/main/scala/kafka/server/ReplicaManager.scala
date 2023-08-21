@@ -1182,6 +1182,9 @@ class ReplicaManager(val config: KafkaConfig,
         } catch {
           // NOTE: Failed produce requests metric is not incremented for known exceptions
           // it is supposed to indicate un-expected failures of a broker in handling a produce request
+          case e@(_: NotLeaderOrFollowerException) =>
+            error(s"Recvd NotLeaderOrFollowerException for ${topicPartition}")
+            (topicPartition, LogAppendResult(LogAppendInfo.UNKNOWN_LOG_APPEND_INFO, Some(e)))
           case e@ (_: UnknownTopicOrPartitionException |
                    _: NotLeaderOrFollowerException |
                    _: RecordTooLargeException |
