@@ -128,7 +128,6 @@ public class Sender implements Runnable {
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
 
     public static final AtomicBoolean shouldLog = new AtomicBoolean(false);
-
     public static class Stats {
 
         // Counters to log.
@@ -801,7 +800,6 @@ public class Sender implements Runnable {
                 // thus it is not safe to reassign the sequence.
                 failBatch(batch, response, batch.attempts() < this.retries);
             }
-
             if (error.exception() instanceof InvalidMetadataException) {
                 if (error.exception() instanceof UnknownTopicOrPartitionException) {
                     log.warn("Received unknown topic or partition error in produce request on partition {}. The " +

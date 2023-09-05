@@ -110,7 +110,7 @@
             files="Sender.java" />
 
     <suppress checks="ImportControl"
-      files="NetworkClient.java|Metadata.java" />
+      files="NetworkClient.java" />
 
     <suppress checks="NPathComplexity"
       files="RecordAccumulator.java" />
