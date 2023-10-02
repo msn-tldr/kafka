@@ -74,7 +74,7 @@
     { "name": "ThrottleTimeMs", "type": "int32", "versions": "1+", "ignorable": true, "default": "0",
       "about": "The duration in milliseconds for which the request was throttled due to a quota violation, or zero if the request did not violate any quota." },
     { "name": "NodeEndpoints", "type": "[]NodeEndpoint", "versions": "10+", "taggedVersions": "10+", "tag": 0,
-      "about": "Endpoints for all current-leaders enumerated in PartitionProduceResponses.", "fields": [
+      "about": "Endpoints for all current-leaders enumerated in PartitionProduceResponses, with errors NOT_LEADER_OR_FOLLOWER & FENCED_LEADER_EPOCH.", "fields": [
       { "name": "NodeId", "type": "int32", "versions": "10+",
         "mapKey": true, "entityType": "brokerId", "about": "The ID of the associated node."},
       { "name": "Host", "type": "string", "versions": "10+",

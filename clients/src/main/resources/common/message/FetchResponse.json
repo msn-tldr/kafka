@@ -106,7 +106,7 @@
       ]}
     ]},
     { "name": "NodeEndpoints", "type": "[]NodeEndpoint", "versions": "16+", "taggedVersions": "16+", "tag": 0,
-      "about": "Endpoints for all current-leaders enumerated in PartitionData.", "fields": [
+      "about": "Endpoints for all current-leaders enumerated in PartitionData, with errors NOT_LEADER_OR_FOLLOWER & FENCED_LEADER_EPOCH.", "fields": [
       { "name": "NodeId", "type": "int32", "versions": "16+",
         "mapKey": true, "entityType": "brokerId", "about": "The ID of the associated node."},
       { "name": "Host", "type": "string", "versions": "16+",
