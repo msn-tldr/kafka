@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.clients.producer.internals;
 
+import java.util.Optional;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -3152,7 +3153,7 @@ public class SenderTest {
     }
 
     /**
-     * Test the scenario that FetchResponse returns NOT_LEADER_OR_FOLLOWER, indicating change in leadership, but it
+     * Test the scenario that ProduceResponse returns NOT_LEADER_OR_FOLLOWER, indicating change in leadership, but it
      * does not contain new leader info(defined in KIP-951).
      */
     @Test
@@ -3221,18 +3222,29 @@ public class SenderTest {
             // Validate metadata-refresh is requested as NOT_LEADER_OR_FOLLOWER received earlier
             assertTrue(metadata.updateRequested());
 
-            // TEST that a subsequent retry waits the backoff period as the new leader info is yet not available.
+            final Optional<Node> leaderTp0 = metadata.currentLeader(tp0).leader;
+            assertTrue(leaderTp0.isPresent());
+            final String leaderTp0NodeId = Integer.toString(leaderTp0.get().id());
+            final Optional<Node> leaderTp1 = metadata.currentLeader(tp0).leader;
+            assertTrue(leaderTp1.isPresent());
+            final String leaderTp1NodeId = Integer.toString(leaderTp1.get().id());
+
+            // Test that when producer batch is sent again post waiting backoff period, then it goes to same leader
+            // as new leader information is yet not available.
+            time.sleep(2 * retryBackoffMaxMs);
             sender.runOnce(); //send produce request
-            assertEquals(0, sender.inFlightBatches(tp0).size());
-            assertEquals(0, sender.inFlightBatches(tp1).size());
-            assertFalse(client.hasInFlightRequests());
+            assertEquals(1, sender.inFlightBatches(tp0).size());
+            assertEquals(1, sender.inFlightBatches(tp1).size());
+            assertTrue(client.hasInFlightRequests());
+            assertEquals(1, client.inFlightRequestCount(leaderTp0NodeId));
+            assertEquals(1, client.inFlightRequestCount(leaderTp1NodeId));
         } finally {
             m.close();
         }
     }
 
     /**
-     * Test the scenario that FetchResponse returns NOT_LEADER_OR_FOLLOWER, indicating change in leadership, along with
+     * Test the scenario that ProduceResponse returns NOT_LEADER_OR_FOLLOWER, indicating change in leadership, along with
      * new leader info(defined in KIP-951).
      */
     @Test
@@ -3275,6 +3287,11 @@ public class SenderTest {
                     }));
             Cluster startingMetadataCluster = metadata.fetch();
 
+            final Optional<Node> originalLeaderTp0 = metadata.currentLeader(tp0).leader;
+            assertTrue(originalLeaderTp0.isPresent());
+            final Optional<Node> originalLeaderTp1 = metadata.currentLeader(tp1).leader;
+            assertTrue(originalLeaderTp1.isPresent());
+
             // Produce to tp0/1/2, where NO_LEADER_OR_FOLLOWER with new leader info is returned for tp0/1, and tp2 is returned without errors.
             Future<RecordMetadata> futureIsProducedTp0 = appendToAccumulator(tp0, 0L, "key", "value");
             Future<RecordMetadata> futureIsProducedTp1 = appendToAccumulator(tp1, 0L, "key", "value");
@@ -3311,7 +3328,7 @@ public class SenderTest {
             assertTrue(!futureIsProducedTp1.isDone(), "Produce request to tp1 should be unfinished.");
             assertTrue(futureIsProducedTp2.isDone(), "Produce request to tp0 should be done.");
 
-            // Validate metadata is unchanged as new leader info wasn't received.
+            // Validate metadata is changed as new leader information was received in ProduceResponse
             assertNotEquals(startingMetadataCluster, metadata.fetch());
             // Validate metadata cached has updated leader info for tp0/1.
             Metadata.LeaderAndEpoch tp0NewLeaderInfo = metadata.currentLeader(tp0);
@@ -3324,11 +3341,19 @@ public class SenderTest {
             // Validate metadata-refresh is requested as NOT_LEADER_OR_FOLLOWER received earlier
             assertTrue(metadata.updateRequested());
 
-            // TEST that a subsequent retry skips the backoff as a new leader information is available.
+            // TEST that a subsequent retry, post waiting the backoff period, goes to new leader
+            // as the metadata was updated.
+            time.sleep(2 * retryBackoffMaxMs);
             sender.runOnce(); //send produce request
             assertEquals(1, sender.inFlightBatches(tp0).size());
             assertEquals(1, sender.inFlightBatches(tp1).size());
             assertTrue(client.hasInFlightRequests());
+            // Validate new leaders for tp0/1 will receive the subsequent retries.
+            assertEquals(1, client.inFlightRequestCount(Integer.toString(newNodeForTp0.id())));
+            assertEquals(1, client.inFlightRequestCount(Integer.toString(newNodeForTp1.id())));
+            // Validate old leaders for tp0/1 have not request scheduled against them.
+            assertEquals(0, client.inFlightRequestCount(Integer.toString(originalLeaderTp0.get().id())));
+            assertEquals(0, client.inFlightRequestCount(Integer.toString(originalLeaderTp1.get().id())));
         } finally {
             m.close();
         }
